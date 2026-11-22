@@ -9,18 +9,42 @@ class NodeDiscoveryTest {
     private val address = "A".repeat(43)
     private val origin = "https://${"a".repeat(52)}.smoke.solutions"
 
+    /** Remote identity comes from the info/address path; the reader answers it with its address. */
+    private fun snap(ip: String?, read: (String) -> NodeMetadata?) = NodeDiscovery.snapshot(
+        ip,
+        { url -> if (url.endsWith(NodeDiscovery.ADDRESS)) read(url)?.address else null },
+        { url -> if (url.endsWith(NodeDiscovery.ADDRESS)) null else read(url) },
+    )
+
+    @Test fun tunnelCheckReadsOnlyTheRemoteAddress() {
+        val calls = mutableListOf<String>()
+        val status = NodeDiscovery.snapshot("192.168.1.2", { url -> calls.add("address $url"); address }) { url ->
+            calls.add("info $url")
+            NodeMetadata(address, origin)
+        }
+        assertTrue(status.ready)
+        assertEquals(listOf("info http://127.0.0.1:8734${NodeDiscovery.INFO}", "address $origin${NodeDiscovery.ADDRESS}"), calls)
+    }
+
+    @Test fun providerAnsweringWithItsOwnIdentityIsUnavailable() {
+        // An unattached tunnel subdomain returns the provider node's address, not ours.
+        val status = NodeDiscovery.snapshot("192.168.1.2", { "B".repeat(43) }) { NodeMetadata(address, origin) }
+        assertFalse(status.ready)
+        assertEquals("TUNNEL UNAVAILABLE", status.label)
+    }
+
     @Test fun startupTunnelUsesReportedCommitterAndVerifiesTheNode() {
         val label = "uri-did-ar-${"a".repeat(52)}"
         val root = "https://$label.smoke.solutions"
         val calls = mutableListOf<String>()
-        val status = NodeDiscovery.snapshot("192.168.1.2") { url ->
+        val status = snap("192.168.1.2") { url ->
             calls.add(url)
             if (url.startsWith("http://127.")) NodeMetadata(address, null, label, "https://smoke.solutions")
             else NodeMetadata(address, null)
         }
         assertEquals(root, status.url)
         assertEquals("CONNECT YOUR NODE", status.label)
-        assertEquals(listOf("http://127.0.0.1:8734${NodeDiscovery.INFO}", root + NodeDiscovery.INFO), calls)
+        assertEquals(listOf("http://127.0.0.1:8734${NodeDiscovery.INFO}", root + NodeDiscovery.ADDRESS), calls)
     }
 
     @Test fun invalidOrUnavailableStartupTunnelNeverAdvertisesLan() {
@@ -33,13 +57,13 @@ class NodeDiscoveryTest {
             label to "https://127.0.0.1",
             label to "https://smoke.solutions",
         )) {
-            val status = NodeDiscovery.snapshot("192.168.1.2") { url ->
+            val status = snap("192.168.1.2") { url ->
                 if (url.startsWith("http://127.")) NodeMetadata(address, null, committer, peer) else null
             }
             assertEquals("TUNNEL UNAVAILABLE", status.label)
             assertEquals("", status.url)
         }
-        val wrongNode = NodeDiscovery.snapshot(null) { url ->
+        val wrongNode = snap(null) { url ->
             if (url.startsWith("http://127.")) NodeMetadata(address, null, label, "https://smoke.solutions")
             else NodeMetadata("B".repeat(43), null)
         }
@@ -60,18 +84,18 @@ class NodeDiscoveryTest {
 
     @Test fun onlyMatchingReachableNodeProducesTunnelQr() {
         val calls = mutableListOf<String>()
-        val status = NodeDiscovery.snapshot("192.168.1.2") { url ->
+        val status = snap("192.168.1.2") { url ->
             calls.add(url)
             NodeMetadata(address, origin)
         }
         assertTrue(status.ready)
         assertEquals(origin, status.url)
-        assertEquals(listOf("http://127.0.0.1:8734${NodeDiscovery.INFO}", origin + NodeDiscovery.INFO), calls)
+        assertEquals(listOf("http://127.0.0.1:8734${NodeDiscovery.INFO}", origin + NodeDiscovery.ADDRESS), calls)
     }
 
     @Test fun unreachableOrWrongTunnelDoesNotFallBackToLan() {
         for (remote in listOf(null, NodeMetadata("B".repeat(43), origin))) {
-            val status = NodeDiscovery.snapshot("192.168.1.2") { url ->
+            val status = snap("192.168.1.2") { url ->
                 if (url.startsWith("http://127.")) NodeMetadata(address, origin) else remote
             }
             assertFalse(status.ready)
@@ -82,15 +106,15 @@ class NodeDiscoveryTest {
 
     @Test fun changedConfigurationIsReadOnEverySnapshot() {
         for (host in listOf(origin, "https://next.smoke.solutions")) {
-            val status = NodeDiscovery.snapshot(null) { NodeMetadata(address, host) }
+            val status = snap(null) { NodeMetadata(address, host) }
             assertEquals(host, status.url)
         }
     }
 
     @Test fun startingAndLocalOnlyStatesStayDistinct() {
-        assertEquals(NodeStatus.booting(), NodeDiscovery.snapshot(null) { null })
-        assertEquals("NETWORK UNAVAILABLE", NodeDiscovery.snapshot(null) { NodeMetadata(address, null) }.label)
-        val local = NodeDiscovery.snapshot("192.168.1.2") { NodeMetadata(address, null) }
+        assertEquals(NodeStatus.booting(), snap(null) { null })
+        assertEquals("NETWORK UNAVAILABLE", snap(null) { NodeMetadata(address, null) }.label)
+        val local = snap("192.168.1.2") { NodeMetadata(address, null) }
         assertTrue(local.ready)
         assertEquals("LOCAL NETWORK NODE", local.label)
         assertEquals("http://192.168.1.2:8734", local.url)
@@ -102,7 +126,7 @@ class NodeDiscoveryTest {
             "https://example.com/#secret", "https://example.com/path", "file:///etc/passwd",
             "https://**[base32 encoded node address]**.smoke.solutions")) {
             assertNull(NodeDiscovery.origin(value))
-            val status = NodeDiscovery.snapshot("192.168.1.2") { NodeMetadata(address, value) }
+            val status = snap("192.168.1.2") { NodeMetadata(address, value) }
             assertFalse(status.ready)
             assertEquals("", status.url)
         }

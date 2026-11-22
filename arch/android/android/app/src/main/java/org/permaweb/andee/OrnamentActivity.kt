@@ -953,7 +953,7 @@ private class OrnamentView(
 private data class Vec3(val x: Float, val y: Float, val z: Float)
 
 private object NodeProbe {
-    fun snapshot(): NodeStatus = NodeDiscovery.snapshot(lanIpv4(), NodeMetadataHttp::read)
+    fun snapshot(): NodeStatus = NodeDiscovery.snapshot(lanIpv4(), NodeMetadataHttp::address, NodeMetadataHttp::read)
 
     private fun lanIpv4(): String? {
         return try {

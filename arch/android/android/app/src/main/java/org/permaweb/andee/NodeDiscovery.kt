@@ -23,6 +23,8 @@ internal data class NodeMetadata(
 /** Presentation of existing meta@1.0 data; no tunnel or identity is created here. */
 internal object NodeDiscovery {
     const val INFO = "/~meta@1.0/info"
+    // The tunnel check needs only identity; the full info map is too large to cross a tunnel in time.
+    const val ADDRESS = "$INFO/address"
     private val addressPattern = Regex("[A-Za-z0-9_-]{43}")
 
     fun origin(value: String): String? = try {
@@ -45,7 +47,7 @@ internal object NodeDiscovery {
         return origin("${provider.scheme}://$committer.${provider.rawAuthority}")
     }
 
-    fun snapshot(ip: String?, read: (String) -> NodeMetadata?): NodeStatus {
+    fun snapshot(ip: String?, readAddress: (String) -> String?, read: (String) -> NodeMetadata?): NodeStatus {
         val local = read("http://127.0.0.1:8734$INFO") ?: return NodeStatus.booting()
         if (!addressPattern.matches(local.address)) return NodeStatus.booting()
         val configured = local.locationUrl ?: local.tunnelPeer?.let {
@@ -54,9 +56,10 @@ internal object NodeDiscovery {
         if (configured != null) {
             val unavailable = NodeStatus(false, ip, "", "TUNNEL UNAVAILABLE")
             val publicOrigin = origin(configured) ?: return unavailable
-            val remote = read(publicOrigin + INFO) ?: return unavailable
+            val remote = readAddress(publicOrigin + ADDRESS) ?: return unavailable
             // A reachable gateway alone is insufficient: it must reach this node.
-            if (remote.address != local.address) return unavailable
+            // (Providers answer unattached subdomains with their own identity.)
+            if (remote != local.address) return unavailable
             return NodeStatus(true, ip, publicOrigin, "CONNECT YOUR NODE")
         }
         return if (ip == null) NodeStatus(false, null, "", "NETWORK UNAVAILABLE")
