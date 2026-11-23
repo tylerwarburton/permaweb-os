@@ -40,6 +40,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.atomic.AtomicBoolean
@@ -292,7 +293,7 @@ private class OrnamentView(
     private var animationFramePending = false
     private var startedAt = System.nanoTime()
     private var cachedQrUrl = ""
-    private var cachedQrRows = DiscoveryQr.rowsFor("http://<node>:8734/")
+    private var cachedQrRows = DiscoveryQr.rowsFor("")
     private var phoneRows: List<String> = emptyList()
     private var qrBitmap: Bitmap? = null
     private var qrBitmapStatus: NodeStatus? = null
@@ -323,11 +324,6 @@ private class OrnamentView(
     }
     private val phonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        typeface = mono
-        isSubpixelText = true
-    }
-    private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(91, 238, 255)
         typeface = mono
         isSubpixelText = true
     }
@@ -362,6 +358,27 @@ private class OrnamentView(
         scaleType = ImageView.ScaleType.FIT_CENTER
         background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, ColorDrawable(Color.WHITE))
     }
+    private val statusTitle = TextView(context).apply {
+        setTextColor(Color.WHITE)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+        typeface = Typeface.DEFAULT_BOLD
+        compoundDrawablePadding = dp(8f).toInt()
+    }
+    private val statusDetail = TextView(context).apply {
+        setTextColor(Color.argb(225, 238, 251, 255))
+        typeface = Typeface.SANS_SERIF
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setLineSpacing(dp(2f), 1f)
+        setPadding(0, dp(4f).toInt(), 0, 0)
+    }
+    private val statusBlock = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(BACKGROUND)
+        setPadding(0, dp(8f).toInt(), 0, dp(8f).toInt())
+        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        addView(statusTitle)
+        addView(statusDetail)
+    }
     private val controls = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -377,7 +394,28 @@ private class OrnamentView(
         addView(setupButton, LayoutParams(dp(132f).toInt(), dp(48f).toInt()))
         addView(controls, LayoutParams(dp(104f).toInt(), dp(48f).toInt()))
         addView(copyUrlButton, LayoutParams(dp(48f).toInt(), dp(48f).toInt()))
+        addView(statusBlock, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         updateControls()
+    }
+
+    private fun updateStatusText() {
+        val status = nodeStatus.get()
+        val pending = nextBootConfigPending.get()
+        statusTitle.text = NodeStatusText.title(status, pending)
+        statusDetail.text = NodeStatusText.detail(status, pending)
+        val color = when {
+            pending -> TERMINATE_ORANGE
+            status.state == NodeState.ONLINE || status.state == NodeState.LOCAL -> ONLINE_GREEN
+            status.state == NodeState.STARTING -> Color.argb(160, 255, 255, 255)
+            status.state == NodeState.TUNNEL_INVALID -> PROBLEM_RED
+            else -> WAITING_AMBER
+        }
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setSize(dp(10f).toInt(), dp(10f).toInt())
+        }
+        statusTitle.setCompoundDrawablesRelativeWithIntrinsicBounds(dot, null, null, null)
     }
 
     private fun iconButton(icon: Int, label: String, action: () -> Unit) = ImageButton(context).apply {
@@ -411,6 +449,7 @@ private class OrnamentView(
         }
         setupButton.setCompoundDrawablesRelative(icon, null, null, null)
         importButton.visibility = if (pending) View.GONE else View.VISIBLE
+        updateStatusText()
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -420,7 +459,7 @@ private class OrnamentView(
         val copySize = dp(9f).toInt()
         val copyTarget = dp(48f).toInt()
         val copyLeft = qrLinkBounds.right.toInt() - copySize
-        val copyTop = (qrLinkBounds.top - dp(52f)).toInt()
+        val copyTop = (qrLinkBounds.top - dp(44f)).toInt()
         textPaint.textSize = dp(9f)
         val textCenter = qrLinkBounds.top - dp(12f) + (textPaint.fontMetrics.ascent + textPaint.fontMetrics.descent) / 2f
         val copyPaddingTop = (textCenter - copyTop - copySize / 2f).toInt().coerceIn(0, copyTarget - copySize)
@@ -432,6 +471,9 @@ private class OrnamentView(
         setupButton.layout(x, y, x + setupButton.measuredWidth, y + setupButton.measuredHeight)
         val controlsY = y + setupButton.measuredHeight + dp(8f).toInt()
         controls.layout(x, controlsY, x + controls.measuredWidth, controlsY + controls.measuredHeight)
+        val statusBottom = (qrLinkBounds.top - dp(if (nodeStatus.get().ready) 44f else 8f)).toInt()
+        val statusTop = max(greeterBottom.toInt(), statusBottom - statusBlock.measuredHeight)
+        statusBlock.layout(x, statusTop, x + statusBlock.measuredWidth, statusBottom)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -445,6 +487,8 @@ private class OrnamentView(
         val padding = ((qrWidth - contentWidth) / 2f).toInt().coerceAtLeast(dp(6f).toInt())
         setupButton.setPadding(padding, 0, padding, 0)
         controls.layoutParams.width = dp(if (importButton.visibility == View.GONE) 48f else 104f).toInt()
+        val available = MeasureSpec.getSize(widthMeasureSpec) - 2 * dp(22f).toInt()
+        statusBlock.layoutParams.width = min(available, max(qrWidth, dp(340f).toInt()))
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
@@ -536,6 +580,7 @@ private class OrnamentView(
                 if (nodeStatus.get() != status) {
                     nodeStatus.set(status)
                     copyUrlButton.visibility = if (status.ready) View.VISIBLE else View.INVISIBLE
+                    updateStatusText()
                     requestLayout()
                     qrBitmapStatus = null
                     changed = true
@@ -730,24 +775,20 @@ private class OrnamentView(
         }
 
         val labelWidth = qrSize
-        val labelY = qrY - dp(30f)
-        accentPaint.typeface = mono
-        accentPaint.textSize = dp(10f)
-        accentPaint.color = Color.WHITE
         textPaint.typeface = mono
         textPaint.textSize = dp(9f)
         textPaint.color = Color.argb(225, 238, 251, 255)
         textPaint.clearShadowLayer()
-        val urlWidth = if (status.ready) labelWidth - dp(15f) else labelWidth
-        val url = fitToWidth(if (status.ready) status.url else "Finding your node…", textPaint, urlWidth)
+        val urlWidth = labelWidth - dp(15f)
         rectPaint.color = BACKGROUND
-        canvas.drawRect(margin - dp(4f), qrY - dp(48f), margin + labelWidth, qrY - dp(4f), rectPaint)
-        canvas.drawText(fitToWidth(status.label, accentPaint, labelWidth), margin, labelY, accentPaint)
-        textPaint.isUnderlineText = status.ready
-        canvas.drawText(url, margin, qrY - dp(12f), textPaint)
-        textPaint.isUnderlineText = false
+        canvas.drawRect(margin - dp(4f), qrY - dp(44f), margin + labelWidth, qrY - dp(4f), rectPaint)
+        if (status.ready) {
+            textPaint.isUnderlineText = true
+            canvas.drawText(fitToWidth(status.url, textPaint, urlWidth), margin, qrY - dp(12f), textPaint)
+            textPaint.isUnderlineText = false
+        }
         val linkRight = if (status.ready) margin + labelWidth - dp(9f) else margin + labelWidth
-        urlLinkBounds.set(margin - dp(4f), qrY - dp(52f), linkRight, qrY - dp(4f))
+        urlLinkBounds.set(margin - dp(4f), qrY - dp(44f), linkRight, qrY - dp(4f))
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -942,6 +983,9 @@ private class OrnamentView(
     companion object {
         private val BACKGROUND = Color.rgb(3, 14, 46)
         private val TERMINATE_ORANGE = Color.rgb(164, 76, 0)
+        private val ONLINE_GREEN = Color.rgb(64, 214, 128)
+        private val WAITING_AMBER = Color.rgb(255, 184, 64)
+        private val PROBLEM_RED = Color.rgb(255, 92, 92)
         private const val ANIMATION_FRAME_MS = 100L
         private const val BOOT_POLL_MS = 1_000L
         private const val STEADY_POLL_MS = 5_000L
